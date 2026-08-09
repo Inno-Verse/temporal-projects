@@ -62,23 +62,31 @@ sequenceDiagram
     participant Client
     participant Controller as DSLWorkflowController
     participant Workflow as DynamicWorkflowImpl
+    participant Validator as PreFlightChecksValidator
     participant Activity as DynamicActivityImpl
     participant Executor as IStepExecutor
 
     Client->>Controller: POST /api/workflows/execute (JSON DSL)
     Controller->>Workflow: start(workflowId, DSL, initialInput)
     
-    loop Over each step in DSL activities array
-        Workflow->>Workflow: Extract "activityType" (e.g., SIMPLE, COMPLEX)
-        Workflow->>Activity: executeUntypedActivity on {TYPE}_EXECUTION_QUEUE
-        Activity->>Activity: Extract "type" from stepConfig (e.g., API_CALL)
-        Activity->>Executor: process(stepConfig, context)
-        Executor-->>Activity: Execution Result (JsonNode)
-        Activity-->>Workflow: Result appended to runtimeContext
+    Workflow->>Validator: validate(workflowDefinition, initialInput)
+    Validator-->>Workflow: errors (JsonNode)
+    
+    alt Validation Failed
+        Workflow-->>Controller: Return early (FAILED_PREFLIGHT_CHECKS)
+    else Validation Passed
+        loop Over each step in DSL activities array
+            Workflow->>Workflow: Extract "activityType" (e.g., SIMPLE, COMPLEX)
+            Workflow->>Activity: executeUntypedActivity on {TYPE}_EXECUTION_QUEUE
+            Activity->>Activity: Extract "type" from stepConfig (e.g., API_CALL)
+            Activity->>Executor: process(stepConfig, context)
+            Executor-->>Activity: Execution Result (JsonNode)
+            Activity-->>Workflow: Result appended to runtimeContext
+        end
+        Workflow-->>Controller: Final Context Map
     end
 
-    Workflow-->>Controller: Final Context Map
-    Controller-->>Client: HTTP 200 OK (Final Context Map)
+    Controller-->>Client: HTTP 200 OK (Context Map)
 ```
 
 ## Key Components
@@ -99,6 +107,9 @@ sequenceDiagram
 
 5. **[DSLWorkflowWorkers](src/main/java/com/nageshwarsaini/dynamic/workflows/worker/DSLWorkflowWorkers.java)**  
    Responsible for starting Temporal worker polling loops on application startup (`@PostConstruct`) and tearing them down gracefully (`@PreDestroy`). It dynamically provisions separate workers for each `ActivityType`, registering the dynamic workflow and activity implementations to their respective task queues.
+
+6. **[PreFlightChecksValidator](src/main/java/com/nageshwarsaini/dynamic/workflows/validator/impl/PreFlightChecksValidator.java)**  
+   Validates the incoming workflow definition and payload before executing any dynamic activities. If the validation fails, the workflow intercepts the errors and gracefully exits with a `FAILED_PREFLIGHT_CHECKS` status, skipping all activity executions.
 
 ## Running Locally
 
