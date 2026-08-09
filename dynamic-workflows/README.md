@@ -4,6 +4,8 @@ This project is a dynamic, Domain Specific Language (DSL) driven workflow engine
 
 ## Architecture & Design
 
+> **📖 Note:** For a comprehensive deep-dive into the architectural decisions, personas, deployment topology, and non-functional requirements, please refer to the [Architecture & Design Document](docs/architecture.md).
+
 The engine leverages Temporal's `DynamicWorkflow` and `DynamicActivity` interfaces to handle arbitrary JSON payloads. It parses the DSL and dynamically schedules and routes activities to appropriate executor implementations using the Strategy Design Pattern.
 
 ### Component Structure
