@@ -157,7 +157,38 @@ Because the underlying worker application relies strictly on standard Temporal S
 
 ---
 
-## 7. Non-Functional Requirements (NFRs) & Extensibility
+## 7. Multi-Tenancy & Namespace Provisioning
+
+To support B2B SaaS deployments, the dynamic workflow engine architecture embraces a strict multi-tenancy model leveraging **Temporal Namespaces**. Namespaces in Temporal provide strong isolation for workflow executions, visibility stores, and data retention rules between different tenants.
+
+### Dynamic Provisioning & Zero-Downtime Registration
+When a new tenant is provisioned within the primary application (e.g., via a Control Plane or Admin Dashboard), the corresponding Temporal namespace is provisioned dynamically on the fly without restarting the engine:
+
+1. **Self-Hosted (Kubernetes)**: 
+   The platform's control plane uses the internal API (`POST /api/internal/tenants/register`). This triggers the application to use the Temporal Java SDK's `WorkflowServiceStubs` (specifically passing a `RegisterNamespaceRequest`) to programmatically create the namespace directly via the gRPC API.
+   
+2. **Dynamic Worker Allocation**: 
+   Once the namespace is created, the worker engine instantiates a new `WorkerFactory` polling loop for the new tenant. These factories are cached in a `ConcurrentHashMap` allowing the Spring Boot workers deployed on Cloud Run to poll multiple tenant namespaces dynamically in real-time, completely bypassing the need for a container restart.
+
+### Execution Isolation & Context Management
+- **Tenant Context**: To keep the core API (`POST /api/workflows/execute`) clean, the engine leverages a Spring `TenantFilter`. The filter extracts the `X-Tenant-ID` HTTP header and stores it in a `ThreadLocal` `TenantContext`. This guarantees that execution threads are tightly scoped to the tenant's namespace, preventing cross-tenant data leakage.
+- **Data Segregation**: Workflows running in `tenant-A` are entirely isolated from `tenant-B`. Querying visibility data across namespaces ensures tenant privacy.
+
+### Production Path: Fleet Sharding for Scalability
+
+As the number of tenants grows to hundreds or thousands, a single Cloud Run instance dynamically polling every single namespace will encounter **thread exhaustion**. Every active namespace requires dedicated polling threads; therefore, scaling out 1,000 tenants across a horizontally scaled Cloud Run infrastructure could result in tens of thousands of idle polling loops crashing the containers and overloading the Temporal cluster.
+
+To mitigate this while maintaining strict data isolation (Namespace-per-tenant), the production architecture must adopt **Fleet Sharding**:
+
+1. **Partitioned Deployments**: The Spring Boot worker application is deployed as multiple separate, identical Cloud Run services (e.g., `worker-fleet-1`, `worker-fleet-2`).
+2. **Tenant Assignment**: A centralized Control Plane acts as the Tenant Assigner. When a new tenant is provisioned, the Control Plane selects a fleet with available capacity.
+3. **Targeted Registration**: The Control Plane calls `POST /api/internal/tenants/register` **only** on the URL of the assigned fleet (e.g., `fleet-2`). Thus, `fleet-2` spins up the worker threads for that specific tenant, while `fleet-1` remains completely unburdened.
+4. **API Gateway Ingress**: An API Gateway sits in front of the Cloud Run fleets. It inspects the `X-Tenant-ID` header of incoming `POST /api/workflows/execute` requests and routes the traffic exclusively to the specific Cloud Run fleet responsible for that tenant.
+
+This ensures unbounded horizontal scalability without sacrificing strict namespace data segregation or the zero-downtime dynamic worker allocation model.
+---
+
+## 8. Non-Functional Requirements (NFRs) & Extensibility
 
 ### Ease of Extensibility
 Adding a new capability (e.g., a `KafkaPublishExecutor`) requires exactly zero changes to the core workflow logic. The platform team simply implements the `IStepExecutor` interface and tags it as a Spring `@Service`. The `DynamicActivityImpl` auto-discovers it, and consumers can immediately use `"type": "KAFKA_PUBLISH"` in their JSON payload.

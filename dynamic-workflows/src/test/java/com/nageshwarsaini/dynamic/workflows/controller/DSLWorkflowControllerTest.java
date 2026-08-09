@@ -1,7 +1,9 @@
 package com.nageshwarsaini.dynamic.workflows.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nageshwarsaini.dynamic.workflows.config.TenantWorkflowClientFactory;
 import com.nageshwarsaini.dynamic.workflows.dto.WorkflowRequest;
+import com.nageshwarsaini.dynamic.workflows.filter.TenantFilter;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -19,7 +22,6 @@ import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -27,19 +29,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(DSLWorkflowController.class)
+@Import(TenantFilter.class)
 public class DSLWorkflowControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
     @MockBean
-    private WorkflowClient workflowClient;
+    private TenantWorkflowClientFactory clientFactory;
 
+    private WorkflowClient workflowClient;
     private ObjectMapper mapper;
 
     @BeforeEach
     public void setup() {
         mapper = new ObjectMapper();
+        workflowClient = mock(WorkflowClient.class);
+        when(clientFactory.getClientForTenant(anyString())).thenReturn(workflowClient);
     }
 
     @Test
@@ -63,12 +69,25 @@ public class DSLWorkflowControllerTest {
 
         // Execute request
         mockMvc.perform(post("/api/workflows/execute")
+                .header("X-Tenant-ID", "tenant-a")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
     }
     
+    @Test
+    public void testExecuteWorkflow_MissingTenant() throws Exception {
+        WorkflowRequest request = new WorkflowRequest();
+        request.setWorkflowName("TestWorkflow");
+
+        // Execute request without header
+        mockMvc.perform(post("/api/workflows/execute")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     public void testExecuteWorkflow_Exception() throws Exception {
         // Prepare mock request
@@ -80,6 +99,7 @@ public class DSLWorkflowControllerTest {
 
         // Execute request
         mockMvc.perform(post("/api/workflows/execute")
+                .header("X-Tenant-ID", "tenant-b")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(request)))
                 .andExpect(status().isInternalServerError());
