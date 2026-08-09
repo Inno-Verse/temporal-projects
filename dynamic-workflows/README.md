@@ -12,6 +12,12 @@ The engine leverages Temporal's `DynamicWorkflow` and `DynamicActivity` interfac
 
 ```mermaid
 classDiagram
+    class TenantFilter {
+        +doFilterInternal()
+    }
+    class TenantWorkflowClientFactory {
+        +getClientForTenant(String)
+    }
     class DSLWorkflowController {
         +executeWorkflow(WorkflowRequest)
     }
@@ -39,7 +45,9 @@ classDiagram
         +init()
     }
 
-    DSLWorkflowController --> DynamicWorkflowImpl : Triggers Untyped Workflow
+    TenantFilter --> DSLWorkflowController : Sets TenantContext
+    DSLWorkflowController --> TenantWorkflowClientFactory : Requests Client
+    TenantWorkflowClientFactory --> DynamicWorkflowImpl : Triggers Untyped Workflow
     DynamicWorkflowImpl --> DynamicActivityImpl : Schedules Untyped Activity
     DynamicActivityImpl --> IStepExecutor : Routes to matching Executor
     IStepExecutor <|-- APICallExecutor
@@ -62,13 +70,18 @@ When a REST call is made, the controller initiates a workflow. The workflow read
 ```mermaid
 sequenceDiagram
     participant Client
+    participant Filter as TenantFilter
     participant Controller as DSLWorkflowController
+    participant Factory as TenantWorkflowClientFactory
     participant Workflow as DynamicWorkflowImpl
     participant Validator as PreFlightChecksValidator
     participant Activity as DynamicActivityImpl
     participant Executor as IStepExecutor
 
-    Client->>Controller: POST /api/workflows/execute (JSON DSL)
+    Client->>Filter: POST /api/workflows/execute (X-Tenant-ID header)
+    Filter->>Controller: Set TenantContext & Forward
+    Controller->>Factory: getClientForTenant(tenantId)
+    Factory-->>Controller: WorkflowClient
     Controller->>Workflow: start(workflowId, DSL, initialInput)
     
     Workflow->>Validator: validate(workflowDefinition, initialInput)
@@ -93,13 +106,16 @@ sequenceDiagram
 
 ## Key Components
 
-1. **[DSLWorkflowController](src/main/java/com/nageshwarsaini/dynamic/workflows/controller/DSLWorkflowController.java)**  
-   Exposes a REST endpoint `/api/workflows/execute` that accepts a `WorkflowRequest`. It interacts with the Temporal `WorkflowClient` to spin up an untyped workflow execution matching the requested DSL name.
+1. **[TenantFilter](src/main/java/com/nageshwarsaini/dynamic/workflows/filter/TenantFilter.java) & [TenantContext](src/main/java/com/nageshwarsaini/dynamic/workflows/context/TenantContext.java)**  
+   Intercepts incoming requests, extracts the `X-Tenant-ID` header, and populates a ThreadLocal context to securely isolate tenant execution boundaries.
 
-2. **[DynamicWorkflowImpl](src/main/java/com/nageshwarsaini/dynamic/workflows/DynamicWorkflowImpl.java)**  
+2. **[DSLWorkflowController](src/main/java/com/nageshwarsaini/dynamic/workflows/controller/DSLWorkflowController.java)**  
+   Exposes a REST endpoint `/api/workflows/execute`. It uses the `TenantWorkflowClientFactory` to get the correct Temporal client for the tenant and spins up an untyped workflow execution matching the requested DSL name.
+
+3. **[DynamicWorkflowImpl](src/main/java/com/nageshwarsaini/dynamic/workflows/DynamicWorkflowImpl.java)**  
    Implements `io.temporal.workflow.DynamicWorkflow`. It iterates over the `"activities"` array in the JSON definition, schedules them as untyped activities, and maintains a `runtimeContext` accumulating results from each step.
 
-3. **[DynamicActivityImpl](src/main/java/com/nageshwarsaini/dynamic/workflows/activity/DynamicActivityImpl.java)**  
+4. **[DynamicActivityImpl](src/main/java/com/nageshwarsaini/dynamic/workflows/activity/DynamicActivityImpl.java)**  
    Implements `io.temporal.activity.DynamicActivity`. This acts as a router. When an activity is triggered, it extracts the `"type"` from the step configuration and delegates the processing to the matching `IStepExecutor`.
 
 4. **[IStepExecutor](src/main/java/com/nageshwarsaini/dynamic/workflows/steps/api/IStepExecutor.java) (Strategy Pattern)**  
