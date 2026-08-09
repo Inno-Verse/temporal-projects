@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nageshwarsaini.dynamic.workflows.activity.DynamicActivityImpl;
 import com.nageshwarsaini.dynamic.workflows.config.ActivityType;
 import com.nageshwarsaini.dynamic.workflows.steps.api.IStepExecutor;
+import com.nageshwarsaini.dynamic.workflows.validator.impl.PreFlightChecksValidator;
 import com.nageshwarsaini.dynamic.workflows.worker.DSLWorkflowWorkers;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
@@ -45,7 +46,7 @@ public class DynamicWorkflowTest {
 
         worker = testEnv.newWorker(DSLWorkflowWorkers.TASK_QUEUE.replace("{TYPE}", ActivityType.SIMPLE.name()));
         worker.registerWorkflowImplementationTypes(DynamicWorkflowImpl.class);
-        worker.registerActivitiesImplementations(new DynamicActivityImpl(Collections.singletonList(mockExecutor)));
+        worker.registerActivitiesImplementations(new DynamicActivityImpl(Collections.singletonList(mockExecutor)), new PreFlightChecksValidator());
         
         testEnv.start();
         workflowClient = testEnv.getWorkflowClient();
@@ -61,7 +62,9 @@ public class DynamicWorkflowTest {
     public void testDynamicWorkflowExecution() throws Exception {
         String definitionJson = "{ \"activities\": [ { \"name\": \"Step 1\", \"type\": \"MOCK_TYPE\" } ] }";
         JsonNode definition = mapper.readTree(definitionJson);
-        JsonNode input = mapper.createObjectNode().put("key", "value");
+        JsonNode input = mapper.createObjectNode()
+                .put("key", "value")
+                .put("requestingUser", "Nageshwar Saini");
 
         WorkflowOptions options = WorkflowOptions.newBuilder()
                 .setTaskQueue(DSLWorkflowWorkers.TASK_QUEUE.replace("{TYPE}", ActivityType.SIMPLE.name()))
@@ -79,5 +82,28 @@ public class DynamicWorkflowTest {
         
         Map<String, Object> step1Result = (Map<String, Object>) result.get("Step1");
         assertEquals("SUCCESS", step1Result.get("status"));
+    }
+
+    @Test
+    public void testDynamicWorkflowExecution_FailedPreflight() throws Exception {
+        String definitionJson = "{ \"activities\": [ { \"name\": \"Step 1\", \"type\": \"MOCK_TYPE\" } ] }";
+        JsonNode definition = mapper.readTree(definitionJson);
+        JsonNode input = mapper.createObjectNode()
+                .put("key", "value")
+                .put("requestingUser", "Invalid User"); // Trigger preflight failure
+
+        WorkflowOptions options = WorkflowOptions.newBuilder()
+                .setTaskQueue(DSLWorkflowWorkers.TASK_QUEUE.replace("{TYPE}", ActivityType.SIMPLE.name()))
+                .build();
+
+        WorkflowStub workflow = workflowClient.newUntypedWorkflowStub("TestWorkflowFailed", options);
+        workflow.start(definition, input);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = workflow.getResult(Map.class);
+
+        assertNotNull(result);
+        assertEquals("FAILED_PREFLIGHT_CHECKS", result.get("status"));
+        assertFalse(result.containsKey("Step1"), "Should not execute Step 1");
     }
 }

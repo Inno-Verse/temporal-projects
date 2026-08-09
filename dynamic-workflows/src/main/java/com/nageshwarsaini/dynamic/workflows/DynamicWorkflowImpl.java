@@ -1,8 +1,11 @@
 package com.nageshwarsaini.dynamic.workflows;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nageshwarsaini.dynamic.workflows.config.ActivityType;
+import com.nageshwarsaini.dynamic.workflows.validator.api.IPreFlightChecksValidator;
 import com.nageshwarsaini.dynamic.workflows.worker.DSLWorkflowWorkers;
 import io.temporal.activity.ActivityOptions;
+import io.temporal.common.RetryOptions;
 import io.temporal.common.converter.EncodedValues;
 import io.temporal.workflow.ActivityStub;
 import io.temporal.workflow.DynamicWorkflow;
@@ -22,22 +25,38 @@ public class DynamicWorkflowImpl implements DynamicWorkflow {
     /**
      * Executes the dynamic workflow logic.
      *
-     * @param args the encoded arguments containing the workflow definition and initial payload
-     * @return the resulting execution context map after all activities have been processed
+     * @param args the encoded arguments containing the workflow definition and
+     *             initial payload
+     * @return the resulting execution context map after all activities have been
+     *         processed
      */
     @Override
     public Object execute(EncodedValues args) {
+        // Extract workflow definition and inputs
         JsonNode workflowDefinition = args.get(0, JsonNode.class);
         JsonNode initialPayload = args.get(1, JsonNode.class);
-
         Map<String, Object> runtimeContext = new LinkedHashMap<>();
         runtimeContext.put("initialInput", initialPayload);
 
-        JsonNode activitiesArray = workflowDefinition.get("activities");
-        if (activitiesArray == null || !activitiesArray.isArray()) {
-            throw new IllegalArgumentException("Workflow payload definition must contain a valid activities array.");
+        // Perform pre-flight checks before entering first activity execution.
+        var preFlightChecksValidatorActivity = Workflow.newActivityStub(
+                IPreFlightChecksValidator.class,
+                ActivityOptions.newBuilder()
+                        .setStartToCloseTimeout(Duration.ofMinutes(5))
+                        .setTaskQueue(DSLWorkflowWorkers.TASK_QUEUE.replace("{TYPE}", ActivityType.SIMPLE.name()))
+                        .setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(1).build())
+                        .build());
+        var errors = preFlightChecksValidatorActivity.validate(workflowDefinition, initialPayload);
+
+        // Gracefully exit without executing activities
+        if (errors != null && errors.has("messages")) {
+            runtimeContext.put("status", "FAILED_PREFLIGHT_CHECKS");
+            runtimeContext.put("errors", errors.get("messages"));
+            return runtimeContext;
         }
 
+        // Proceed with configured activities execution
+        JsonNode activitiesArray = workflowDefinition.get("activities");
         for (JsonNode step : activitiesArray) {
             String stepName = step.get("name").asText();
             String executionType = step.has("activityType") ? step.get("activityType").asText() : "SIMPLE";
@@ -52,8 +71,7 @@ public class DynamicWorkflowImpl implements DynamicWorkflow {
                     stepName,
                     JsonNode.class,
                     step,
-                    runtimeContext
-            );
+                    runtimeContext);
             String sanitizedKey = stepName.replaceAll("\\s+", "");
             runtimeContext.put(sanitizedKey, stepResult);
         }
