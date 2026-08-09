@@ -49,20 +49,24 @@ classDiagram
     }
     class Spring_Boot_Workers {
         <<Platform Persona>>
+        +TenantFilter
+        +TenantWorkflowClientFactory
         +PreFlightChecksValidator
         +DynamicWorkflowImpl
         +DynamicActivityImpl
         +IStepExecutor Strategies
     }
 
-    Client --> API_Gateway : POST /api/workflows/execute
+    Client --> API_Gateway : POST /api/workflows/execute (X-Tenant-ID)
     API_Gateway --> Spring_Boot_Workers : Forward Request
-    Spring_Boot_Workers --> Temporal_Server : Schedule Workflow
+    Spring_Boot_Workers --> Temporal_Server : Schedule Workflow (Tenant Namespace)
     Temporal_Server --> Spring_Boot_Workers : Dispatch PreFlight Check
     Temporal_Server --> Spring_Boot_Workers : Dispatch Untyped Activities
 ```
 
 ### Core Components
+- **TenantFilter & TenantContext**: Securely isolates execution contexts by intercepting the `X-Tenant-ID` header and storing it in a ThreadLocal variable for request duration.
+- **TenantWorkflowClientFactory**: Dynamically instantiates or retrieves a cached Temporal `WorkflowClient` strictly bound to the requesting tenant's namespace.
 - **DSLWorkflowController**: The REST entry point. Receives the JSON payload and instructs the Temporal `WorkflowClient` to spin up a new untyped workflow execution.
 - **PreFlightChecksValidator**: A strongly-typed initial gateway activity. It guarantees structural integrity (e.g., validates the presence of an `"activities"` array) and authorizes the payload (e.g., user entitlement checks) before Temporal commits any resources to subsequent steps. If this fails, the workflow gracefully aborts.
 - **DynamicWorkflowImpl**: Iterates over the validated DSL array, scheduling untyped activities on specific task queues based on their defined complexity.
