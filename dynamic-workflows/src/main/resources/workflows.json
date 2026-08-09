@@ -1,0 +1,40 @@
+{
+  "workflows": [
+    {
+      "workflowName": "Onboarding",
+      "definition": {
+        "activities": [
+          {
+            "name": "Validate User",
+            "type": "API_CALL",
+            "activityType": "SIMPLE",
+            "inputs": {
+              "endpoint": "/v1/person/{personId}",
+              "httpMethod": "GET"
+            }
+          },
+          {
+            "name": "Get Documents",
+            "type": "API_CALL",
+            "activityType": "COMPLEX",
+            "inputs": {
+              "endpoint": "/v1/documents/{personId}",
+              "httpMethod": "GET"
+            }
+          },
+          {
+            "name": "Parse Documents",
+            "type": "SCRIPT",
+            "activityType": "SIMPLE",
+            "inputs": {
+              "script": "var x; x=\"success\"; return x;"
+            }
+          }
+        ]
+      },
+      "input": {
+        "requestingUser": "Nageshwar Saini"
+      }
+    }
+  ]
+}
