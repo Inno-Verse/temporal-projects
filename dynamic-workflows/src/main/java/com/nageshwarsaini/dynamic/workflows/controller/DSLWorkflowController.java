@@ -1,5 +1,7 @@
 package com.nageshwarsaini.dynamic.workflows.controller;
 
+import com.nageshwarsaini.dynamic.workflows.config.TenantWorkflowClientFactory;
+import com.nageshwarsaini.dynamic.workflows.context.TenantContext;
 import com.nageshwarsaini.dynamic.workflows.dto.WorkflowRequest;
 import com.nageshwarsaini.dynamic.workflows.worker.DSLWorkflowWorkers;
 import io.temporal.api.common.v1.WorkflowExecution;
@@ -24,16 +26,15 @@ import java.util.UUID;
 @RequestMapping("/api/workflows")
 public class DSLWorkflowController {
 
-    // Injecting the single thread-safe client instance bean
-    private final WorkflowClient client;
+    private final TenantWorkflowClientFactory clientFactory;
 
     /**
-     * Constructs a new {@code DSLWorkflowController} with the specified Temporal client.
+     * Constructs a new {@code DSLWorkflowController} with the specified client factory.
      *
-     * @param client the workflow client used to start workflows
+     * @param clientFactory the factory to get workflow clients per tenant
      */
-    public DSLWorkflowController(WorkflowClient client) {
-        this.client = client;
+    public DSLWorkflowController(TenantWorkflowClientFactory clientFactory) {
+        this.clientFactory = clientFactory;
     }
 
     /**
@@ -43,8 +44,15 @@ public class DSLWorkflowController {
      * @return a {@link ResponseEntity} containing the final context map resulting from the workflow execution
      */
     @PostMapping("/execute")
-    public ResponseEntity<Map<String, Object>> executeWorkflow(@RequestBody WorkflowRequest request) {
+    public ResponseEntity<?> executeWorkflow(@RequestBody WorkflowRequest request) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return ResponseEntity.badRequest().body("Missing X-Tenant-ID header");
+        }
+
         try {
+            WorkflowClient client = clientFactory.getClientForTenant(tenantId);
+            
             // Generate a unique workflow ID tracking string for this run
             String workflowId = "dsl-" + request.getWorkflowName().toLowerCase() + "-" + UUID.randomUUID();
 
@@ -55,7 +63,7 @@ public class DSLWorkflowController {
                     .build();
 
             WorkflowStub untypedStub = client.newUntypedWorkflowStub(request.getWorkflowName(), options);
-            System.out.println(">>> REST Endpoint API triggered. Dispatching payload: " + workflowId);
+            System.out.println(">>> REST Endpoint API triggered for tenant " + tenantId + ". Dispatching payload: " + workflowId);
 
             // Run execution asynchronously
             WorkflowExecution execution = untypedStub.start(

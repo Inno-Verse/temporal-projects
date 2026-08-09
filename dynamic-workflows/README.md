@@ -130,47 +130,78 @@ To run this project locally, you will need a running Temporal development server
    mvn spring-boot:run
    ```
 
-## Usage
+## Usage & Local Testing
 
-Send a POST request to `/api/workflows/execute` with a JSON payload defining the workflow logic.
+The engine supports true multi-tenancy isolated by Temporal Namespaces. Predefined tenants (e.g., `tenant-a`, `tenant-b`) are automatically provisioned on startup. 
 
-**Example Request:**
+Below are the steps to test tenant isolation and dynamic onboarding locally.
 
-```json
-{
-  "workflowName": "Onboarding",
-  "definition": {
-    "activities": [
-      {
-        "name": "Validate User",
-        "type": "API_CALL",
-        "activityType": "SIMPLE",
-        "inputs": {
-          "endpoint": "/v1/person/{personId}",
-          "httpMethod": "GET"
-        }
-      },
-      {
-        "name": "Get Documents",
-        "type": "API_CALL",
-        "activityType": "COMPLEX",
-        "inputs": {
-          "endpoint": "/v1/documents/{personId}",
-          "httpMethod": "GET"
-        }
-      },
-      {
-        "name": "Parse Documents",
-        "type": "SCRIPT",
-        "activityType": "SIMPLE",
-        "inputs": {
-          "script": "var x; x=\"success\"; return x;"
-        }
-      }
-    ]
-  },
-  "input": {
-    "requestingUser": "Nageshwar Saini"
-  }
-}
+### 1. Test Tenant Isolation
+Execute workflows for `tenant-a` and `tenant-b`. Notice how the `X-Tenant-ID` header isolates execution contexts natively.
+
+**For `tenant-a`:**
+```bash
+curl -X POST http://localhost:8080/api/workflows/execute \
+     -H "Content-Type: application/json" \
+     -H "X-Tenant-ID: tenant-a" \
+     -d '{
+       "workflowName": "Onboarding_A",
+       "definition": {
+         "activities": [
+           { "name": "Validate User", "type": "API_CALL", "activityType": "SIMPLE", "inputs": { "endpoint": "/v1/person/{personId}", "httpMethod": "GET" } },
+           { "name": "Get Documents", "type": "API_CALL", "activityType": "COMPLEX", "inputs": { "endpoint": "/v1/documents/{personId}", "httpMethod": "GET" } },
+           { "name": "Parse Documents", "type": "SCRIPT", "activityType": "SIMPLE", "inputs": {"script": "var x; x=\"success\"; return x;"} }
+         ]
+       },
+       "input": { "requestingUser": "Nageshwar Saini" }
+     }'
 ```
+
+**For `tenant-b`:**
+```bash
+curl -X POST http://localhost:8080/api/workflows/execute \
+     -H "Content-Type: application/json" \
+     -H "X-Tenant-ID: tenant-b" \
+     -d '{
+       "workflowName": "Onboarding_B",
+       "definition": {
+         "activities": [
+           { "name": "Validate User", "type": "API_CALL", "activityType": "SIMPLE", "inputs": { "endpoint": "/v1/person/{personId}", "httpMethod": "GET" } },
+           { "name": "Get Documents", "type": "API_CALL", "activityType": "COMPLEX", "inputs": { "endpoint": "/v1/documents/{personId}", "httpMethod": "GET" } },
+           { "name": "Parse Documents", "type": "SCRIPT", "activityType": "SIMPLE", "inputs": {"script": "var x; x=\"success\"; return x;"} }
+         ]
+       },
+       "input": { "requestingUser": "Nageshwar Saini" }
+     }'
+```
+
+### 2. Tenant Creation and Worker Registration
+To onboard a new tenant dynamically *without restarting the application*, use the internal registration endpoint. This provisions a Temporal namespace and starts the required worker fleets instantly on the fly.
+
+```bash
+curl -X POST http://localhost:8080/api/internal/tenants/register \
+  -H "Content-Type: application/json" \
+  -d '{"tenantId": "tenant-c"}'
+```
+
+### 3. New Workflow Request for `tenant-c`
+Now that `tenant-c` is registered, you can dispatch workflows to it immediately:
+
+```bash
+curl -X POST http://localhost:8080/api/workflows/execute \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: tenant-c" \
+  -d '{
+    "workflowName": "Onboarding_C",
+    "definition": {
+         "activities": [
+           { "name": "Validate User", "type": "API_CALL", "activityType": "SIMPLE", "inputs": { "endpoint": "/v1/person/{personId}", "httpMethod": "GET" } },
+           { "name": "Get Documents", "type": "API_CALL", "activityType": "COMPLEX", "inputs": { "endpoint": "/v1/documents/{personId}", "httpMethod": "GET" } },
+           { "name": "Parse Documents", "type": "SCRIPT", "activityType": "SIMPLE", "inputs": {"script": "var x; x=\"success\"; return x;"} }
+         ]
+       },
+    "input": { "requestingUser": "Nageshwar Saini" }
+  }'
+```
+
+> **UI Verification:** Open the Temporal Web UI at `http://localhost:8233`. Use the namespace dropdown in the top-left to switch between `tenant-a`, `tenant-b`, and `tenant-c` to verify that workflow executions are completely isolated.
