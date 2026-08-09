@@ -4,6 +4,7 @@ import com.nageshwarsaini.dynamic.workflows.DynamicWorkflowImpl;
 import com.nageshwarsaini.dynamic.workflows.activity.DynamicActivityImpl;
 import com.nageshwarsaini.dynamic.workflows.config.ActivityType;
 import com.nageshwarsaini.dynamic.workflows.steps.api.IStepExecutor;
+import com.nageshwarsaini.dynamic.workflows.validator.impl.PreFlightChecksValidator;
 import io.temporal.client.WorkflowClient;
 import io.temporal.worker.Worker;
 import io.temporal.worker.WorkerFactory;
@@ -47,7 +48,7 @@ public class DSLWorkflowWorkers {
         for(var type: ActivityType.values()) {
             Worker worker = factory.newWorker(TASK_QUEUE.replace("{TYPE}", type.name()));
             worker.registerWorkflowImplementationTypes(DynamicWorkflowImpl.class);
-            worker.registerActivitiesImplementations(new DynamicActivityImpl(executors));
+            worker.registerActivitiesImplementations(new DynamicActivityImpl(executors), new PreFlightChecksValidator());
         }
         factory.start();
         System.out.println("DSL Engine Worker successfully started and polling " + TASK_QUEUE + "...");
