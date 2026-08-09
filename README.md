@@ -1,4 +1,4 @@
-# temporal-projects
+# Temporal Projects
 Projects based on Temporal's highly resilient workflow execution model.
 
 ## Projects
